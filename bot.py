@@ -18,7 +18,6 @@ from telegram.ext import (
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 DATA_FILE = "ledger.json"
-SERVER_HOST = "http://127.0.0.1:8080" 
 
 # ----------------- 🔑 核心权限设置 -----------------
 OWNER_USERNAME = "@CKpay11" 
@@ -346,7 +345,8 @@ def generate_finished_report(chat_id):
 
 def get_ledger_keyboard(chat_id):
     today = datetime.now().strftime("%Y-%m-%d")
-    web_bill_url = f"{SERVER_HOST}/bill?chatid={chat_id}&date={today}%2006:00:00"
+    server_host = os.environ.get("SERVER_HOST", "http://127.0.0.1:8080")
+    web_bill_url = f"{server_host}/bill?chatid={chat_id}&date={today}%2006:00:00"
     keyboard = [
         [InlineKeyboardButton("📒 完整账单", url=web_bill_url)]
     ]
@@ -566,13 +566,16 @@ async def daily_auto_finish_task(bot):
                             print(f"发送群 {chat_id} 日切自动结算失败: {e}")
 
 async def main():
+    # 启动 aiohttp 网页服务（适配云端动态端口）
     web_app = web.Application()
     web_app.router.add_get('/bill', handle_web_bill)
     runner = web.AppRunner(web_app)
     await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', 8080)
+    
+    port = int(os.environ.get("PORT", 8080))
+    site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
-    print("🌐 网页账单服务已启动 (端口 8080)")
+    print(f"🌐 网页账单服务已启动 (端口 {port})")
 
     TOKEN = "9123032276:AAF_J4trsLhrC1mByepaaVx9zVCgIAFTBtE"
     print("正在连接 Telegram 服务器并初始化机器人...")
@@ -586,12 +589,18 @@ async def main():
     await app.initialize()
     await app.start()
     
+    # 启动后台日切任务
     asyncio.create_task(daily_auto_finish_task(app.bot))
     
+    # 启动长轮询监听消息
     await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
     
-    stop_signal = asyncio.Event()
-    await stop_signal.wait()
+    # 保持事件循环持续运行
+    try:
+        await asyncio.Event().wait()
+    finally:
+        await app.stop()
+        await app.shutdown()
 
 if __name__ == '__main__':
     try:
